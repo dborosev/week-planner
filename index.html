@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Week Planner</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f0f2f5;
+            color: #333;
+            min-height: 100vh;
+        }
+        header {
+            background: #2c3e50;
+            color: white;
+            padding: 1.2rem 2rem;
+            text-align: center;
+        }
+        header h1 { font-size: 1.5rem; font-weight: 600; }
+        header p { font-size: 0.85rem; opacity: 0.7; margin-top: 0.3rem; }
+        .grid {
+            display: grid;
+            grid-template-columns: 90px repeat(7, 1fr);
+            gap: 1px;
+            background: #cbd5e0;
+            margin: 1.5rem auto;
+            max-width: 1200px;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .time-label {
+            background: #e2e8f0;
+            padding: 0.6rem 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #4a5568;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            line-height: 1.3;
+        }
+        .day-header {
+            background: #2c3e50;
+            color: white;
+            padding: 0.7rem 0.5rem;
+            text-align: center;
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+        .day-header .date {
+            font-size: 0.7rem;
+            opacity: 0.7;
+            font-weight: 400;
+            margin-top: 2px;
+        }
+        .day-header.today {
+            background: #2980b9;
+        }
+        .day-header.editable {
+            background: #34495e;
+        }
+        .day-header.readonly {
+            background: #5a6a7a;
+        }
+        .corner {
+            background: #2c3e50;
+        }
+        .slot {
+            background: white;
+            padding: 0;
+            min-height: 70px;
+        }
+        .slot textarea {
+            width: 100%;
+            height: 100%;
+            min-height: 70px;
+            border: none;
+            padding: 0.5rem;
+            font-size: 0.8rem;
+            font-family: inherit;
+            resize: none;
+            background: transparent;
+            color: #333;
+            line-height: 1.4;
+        }
+        .slot textarea:focus {
+            outline: 2px solid #3498db;
+            outline-offset: -2px;
+            background: #ebf5fb;
+        }
+        .slot.readonly {
+            background: #f7f8fa;
+        }
+        .slot.readonly textarea {
+            color: #999;
+            cursor: not-allowed;
+            background: #f7f8fa;
+        }
+        .slot.today {
+            background: #eaf4fd;
+        }
+        .status {
+            text-align: center;
+            padding: 0.8rem;
+            font-size: 0.75rem;
+            color: #888;
+        }
+        .status .saved { color: #27ae60; }
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 70px repeat(7, 1fr);
+                margin: 0.5rem;
+                font-size: 0.7rem;
+            }
+            .day-header { font-size: 0.7rem; padding: 0.5rem 0.2rem; }
+            .day-header .date { font-size: 0.6rem; }
+            .time-label { font-size: 0.65rem; padding: 0.4rem 0.2rem; }
+            .slot textarea { font-size: 0.7rem; min-height: 55px; padding: 0.3rem; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Week Planner</h1>
+        <p>Click any slot to type. Only today and the next 2 days are editable.</p>
+    </header>
+    <div class="grid" id="grid"></div>
+    <div class="status" id="status">Loading...</div>
+
+    <script>
+        const SLOTS = [
+            { label: '8 – 10 AM', key: '08' },
+            { label: '10 AM – 12 PM', key: '10' },
+            { label: '12 – 2 PM', key: '12' },
+            { label: '2 – 4 PM', key: '14' },
+            { label: '4 – 6 PM', key: '16' },
+            { label: '6 – 8 PM', key: '18' }
+        ];
+        const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const STORAGE_KEY = 'weekplanner_data';
+
+        function dateKey(d) {
+            return d.toISOString().slice(0, 10);
+        }
+
+        function getWeekDays() {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const dow = today.getDay();
+            const monday = new Date(today);
+            monday.setDate(today.getDate() - ((dow + 6) % 7));
+            const days = [];
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(monday);
+                d.setDate(monday.getDate() + i);
+                days.push(d);
+            }
+            return days;
+        }
+
+        function loadData() {
+            try {
+                return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+            } catch { return {}; }
+        }
+
+        function saveData(data) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        }
+
+        function cleanOldData(data) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const yesterday = new Date(today);
+            yesterday.setDate(today.getDate() - 1);
+            const cutoff = dateKey(yesterday);
+            let changed = false;
+            for (const key of Object.keys(data)) {
+                const dPart = key.slice(0, 10);
+                if (dPart <= cutoff) {
+                    delete data[key];
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+
+        function isEditable(d) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const diff = Math.round((d - today) / 86400000);
+            return diff >= 0 && diff <= 2;
+        }
+
+        function isToday(d) {
+            const today = new Date();
+            return dateKey(d) === dateKey(today);
+        }
+
+        function render() {
+            const grid = document.getElementById('grid');
+            const data = loadData();
+            cleanOldData(data);
+            saveData(data);
+            grid.innerHTML = '';
+
+            const days = getWeekDays();
+
+            // Corner cell
+            const corner = document.createElement('div');
+            corner.className = 'corner';
+            grid.appendChild(corner);
+
+            // Day headers
+            for (const d of days) {
+                const header = document.createElement('div');
+                const today = isToday(d);
+                const editable = isEditable(d);
+                header.className = 'day-header' + (today ? ' today' : editable ? ' editable' : ' readonly');
+                header.innerHTML = `${DAY_NAMES[d.getDay()]}<div class="date">${MONTH_NAMES[d.getMonth()]} ${d.getDate()}</div>`;
+                grid.appendChild(header);
+            }
+
+            // Time slots
+            for (const slot of SLOTS) {
+                const label = document.createElement('div');
+                label.className = 'time-label';
+                label.textContent = slot.label;
+                grid.appendChild(label);
+
+                for (const d of days) {
+                    const cell = document.createElement('div');
+                    const editable = isEditable(d);
+                    const today = isToday(d);
+                    cell.className = 'slot' + (!editable ? ' readonly' : '') + (today ? ' today' : '');
+
+                    const ta = document.createElement('textarea');
+                    const storageId = dateKey(d) + '_' + slot.key;
+                    ta.value = data[storageId] || '';
+                    ta.readOnly = !editable;
+                    if (!editable) ta.tabIndex = -1;
+                    ta.placeholder = editable ? '...' : '';
+
+                    let saveTimer;
+                    ta.addEventListener('input', () => {
+                        clearTimeout(saveTimer);
+                        saveTimer = setTimeout(() => {
+                            const current = loadData();
+                            if (ta.value.trim()) {
+                                current[storageId] = ta.value;
+                            } else {
+                                delete current[storageId];
+                            }
+                            saveData(current);
+                            showSaved();
+                        }, 300);
+                    });
+
+                    cell.appendChild(ta);
+                    grid.appendChild(cell);
+                }
+            }
+
+            document.getElementById('status').textContent = 'Auto-saves as you type';
+        }
+
+        function showSaved() {
+            const status = document.getElementById('status');
+            status.innerHTML = '<span class="saved">Saved</span>';
+            setTimeout(() => { status.textContent = 'Auto-saves as you type'; }, 1500);
+        }
+
+        render();
+    </script>
+</body>
+</html>
