@@ -57,18 +57,10 @@
             font-weight: 400;
             margin-top: 2px;
         }
-        .day-header.today {
-            background: #2980b9;
-        }
-        .day-header.editable {
-            background: #34495e;
-        }
-        .day-header.readonly {
-            background: #5a6a7a;
-        }
-        .corner {
-            background: #2c3e50;
-        }
+        .day-header.today { background: #2980b9; }
+        .day-header.editable { background: #34495e; }
+        .day-header.readonly { background: #5a6a7a; }
+        .corner { background: #2c3e50; }
         .slot {
             background: white;
             padding: 0;
@@ -92,17 +84,13 @@
             outline-offset: -2px;
             background: #ebf5fb;
         }
-        .slot.readonly {
-            background: #f7f8fa;
-        }
+        .slot.readonly { background: #f7f8fa; }
         .slot.readonly textarea {
             color: #999;
             cursor: not-allowed;
             background: #f7f8fa;
         }
-        .slot.today {
-            background: #eaf4fd;
-        }
+        .slot.today { background: #eaf4fd; }
         .status {
             text-align: center;
             padding: 0.8rem;
@@ -110,11 +98,11 @@
             color: #888;
         }
         .status .saved { color: #27ae60; }
+        .status .error { color: #e74c3c; }
         @media (max-width: 768px) {
             .grid {
                 grid-template-columns: 70px repeat(7, 1fr);
                 margin: 0.5rem;
-                font-size: 0.7rem;
             }
             .day-header { font-size: 0.7rem; padding: 0.5rem 0.2rem; }
             .day-header .date { font-size: 0.6rem; }
@@ -129,9 +117,25 @@
         <p>Click any slot to type. Only today and the next 2 days are editable.</p>
     </header>
     <div class="grid" id="grid"></div>
-    <div class="status" id="status">Loading...</div>
+    <div class="status" id="status">Connecting...</div>
 
-    <script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { getDatabase, ref, onValue, set, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAbYQjqOESqkVvY2L0-Pq0OBP3aNrFS_CY",
+            authDomain: "tennis-planner-9bb25.firebaseapp.com",
+            projectId: "tennis-planner-9bb25",
+            storageBucket: "tennis-planner-9bb25.firebasestorage.app",
+            messagingSenderId: "336984359623",
+            appId: "1:336984359623:web:d14ca31f7476b45cb534e2",
+            databaseURL: "https://tennis-planner-9bb25-default-rtdb.firebaseio.com"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
         const SLOTS = [
             { label: '8 – 10 AM', key: '08' },
             { label: '10 AM – 12 PM', key: '10' },
@@ -142,7 +146,6 @@
         ];
         const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        const STORAGE_KEY = 'weekplanner_data';
 
         function dateKey(d) {
             return d.toISOString().slice(0, 10);
@@ -163,33 +166,6 @@
             return days;
         }
 
-        function loadData() {
-            try {
-                return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-            } catch { return {}; }
-        }
-
-        function saveData(data) {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        }
-
-        function cleanOldData(data) {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const yesterday = new Date(today);
-            yesterday.setDate(today.getDate() - 1);
-            const cutoff = dateKey(yesterday);
-            let changed = false;
-            for (const key of Object.keys(data)) {
-                const dPart = key.slice(0, 10);
-                if (dPart <= cutoff) {
-                    delete data[key];
-                    changed = true;
-                }
-            }
-            return changed;
-        }
-
         function isEditable(d) {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
@@ -198,20 +174,42 @@
         }
 
         function isToday(d) {
+            return dateKey(d) === dateKey(new Date());
+        }
+
+        function cleanOldData() {
             const today = new Date();
-            return dateKey(d) === dateKey(today);
+            today.setHours(0, 0, 0, 0);
+            const yesterday = new Date(today);
+            yesterday.setDate(today.getDate() - 1);
+            const cutoff = dateKey(yesterday);
+
+            const rootRef = ref(db, 'slots');
+            onValue(rootRef, (snapshot) => {
+                const data = snapshot.val() || {};
+                for (const key of Object.keys(data)) {
+                    const datePart = key.slice(0, 10);
+                    if (datePart <= cutoff) {
+                        remove(ref(db, `slots/${key}`));
+                    }
+                }
+            }, { onlyOnce: true });
+        }
+
+        function showStatus(msg, type) {
+            const el = document.getElementById('status');
+            el.innerHTML = type ? `<span class="${type}">${msg}</span>` : msg;
+            if (type === 'saved') {
+                setTimeout(() => { el.textContent = 'Live — changes sync instantly'; }, 1500);
+            }
         }
 
         function render() {
             const grid = document.getElementById('grid');
-            const data = loadData();
-            cleanOldData(data);
-            saveData(data);
             grid.innerHTML = '';
-
             const days = getWeekDays();
 
-            // Corner cell
+            // Corner
             const corner = document.createElement('div');
             corner.className = 'corner';
             grid.appendChild(corner);
@@ -226,7 +224,7 @@
                 grid.appendChild(header);
             }
 
-            // Time slots
+            // Slots
             for (const slot of SLOTS) {
                 const label = document.createElement('div');
                 label.className = 'time-label';
@@ -240,25 +238,36 @@
                     cell.className = 'slot' + (!editable ? ' readonly' : '') + (today ? ' today' : '');
 
                     const ta = document.createElement('textarea');
-                    const storageId = dateKey(d) + '_' + slot.key;
-                    ta.value = data[storageId] || '';
+                    const slotId = dateKey(d) + '_' + slot.key;
                     ta.readOnly = !editable;
                     if (!editable) ta.tabIndex = -1;
                     ta.placeholder = editable ? '...' : '';
 
+                    // Listen for live updates from Firebase
+                    const slotRef = ref(db, `slots/${slotId}`);
+                    onValue(slotRef, (snapshot) => {
+                        const val = snapshot.val() || '';
+                        if (document.activeElement !== ta) {
+                            ta.value = val;
+                        }
+                    });
+
+                    // Save on input with debounce
                     let saveTimer;
                     ta.addEventListener('input', () => {
                         clearTimeout(saveTimer);
                         saveTimer = setTimeout(() => {
-                            const current = loadData();
+                            const slotRef = ref(db, `slots/${slotId}`);
                             if (ta.value.trim()) {
-                                current[storageId] = ta.value;
+                                set(slotRef, ta.value)
+                                    .then(() => showStatus('Saved', 'saved'))
+                                    .catch(() => showStatus('Save failed — check connection', 'error'));
                             } else {
-                                delete current[storageId];
+                                remove(slotRef)
+                                    .then(() => showStatus('Saved', 'saved'))
+                                    .catch(() => showStatus('Save failed — check connection', 'error'));
                             }
-                            saveData(current);
-                            showSaved();
-                        }, 300);
+                        }, 400);
                     });
 
                     cell.appendChild(ta);
@@ -266,15 +275,10 @@
                 }
             }
 
-            document.getElementById('status').textContent = 'Auto-saves as you type';
+            showStatus('Live — changes sync instantly');
         }
 
-        function showSaved() {
-            const status = document.getElementById('status');
-            status.innerHTML = '<span class="saved">Saved</span>';
-            setTimeout(() => { status.textContent = 'Auto-saves as you type'; }, 1500);
-        }
-
+        cleanOldData();
         render();
     </script>
 </body>
